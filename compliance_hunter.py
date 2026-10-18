@@ -25,7 +25,7 @@ from dotenv import find_dotenv, load_dotenv
 try:
     import mcafee_epo
 except ImportError:
-    sys.exit("mcafee-epo kütüphanesi bulunamadı: pip install mcafee-epo")
+    sys.exit("mcafee-epo kütüphanesi bulunamadı: pip install -r requirements.txt")
 
 # .env aşağıdaki sabitlerden ÖNCE yüklenmeli; yoksa STALE_DAYS/TAG_NAME/DAT_* .env'den okunmaz.
 # Önce çalışılan dizindeki .env, yoksa betiğin yanındaki .env aranır.
