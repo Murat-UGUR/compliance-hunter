@@ -5,12 +5,21 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        os: [ubuntu-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          # ePO servers and their scheduled tasks usually run on Windows
+          - os: windows-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -19,6 +28,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements-dev.txt
       - name: Lint
+        if: runner.os == 'Linux'
         run: ruff check .
       - name: Tests (mock ePO, no real server needed)
         run: pytest -v
