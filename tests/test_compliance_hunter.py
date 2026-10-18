@@ -62,10 +62,12 @@ def test_missing_tag_reports_error(base_env, run):
 
 
 def test_partial_batch_failure_continues(base_env, run):
+    """The failing batch gets HTTP 500: the real client raises requests.HTTPError, not APIError."""
     mock_epo.S.reset(fail_apply_batch=1)
     exp = expected(mock_epo.S.fleet)
     p = run(base_env)
     assert p.returncode == 1
+    assert "Traceback" not in p.stderr
     assert len(mock_epo.S.tags[TAG]) == len(exp) - 50
     assert mock_epo.S.webhooks[0]["tagged"] == len(exp) - 50
 
@@ -79,7 +81,10 @@ def test_all_compliant_sends_nothing(base_env, run):
 
 
 def test_wrong_password_exit_3(state, base_env, run):
-    assert run({**base_env, "EPO_PASSWORD": "wrong"}).returncode == 3
+    p = run({**base_env, "EPO_PASSWORD": "wrong"})
+    assert p.returncode == 3
+    assert "kimlik doğrulama" in p.stderr  # HTTP 401 is reported as an auth problem, not "unreachable"
+    assert "Traceback" not in p.stderr
 
 
 def test_unreachable_epo_exit_3(state, base_env, run):

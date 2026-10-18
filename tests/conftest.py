@@ -1,3 +1,4 @@
+import importlib.util
 import os
 import shutil
 import socket
@@ -13,6 +14,12 @@ import mock_epo  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 SHIM = Path(__file__).resolve().parent / "shim"
 PYTHON = os.environ.get("HUNTER_PYTHON", sys.executable)
+# Test against the real mcafee-epo package when it is installed (CI); fall back to the shim otherwise.
+REAL_LIBRARY = importlib.util.find_spec("mcafee_epo") is not None
+
+
+def pytest_report_header(config):
+    return f"mcafee_epo under test: {'real package' if REAL_LIBRARY else 'tests/shim (fallback)'}"
 
 
 def _free_port():
@@ -54,7 +61,8 @@ def run(tmp_path):
         shutil.copy(ROOT / "compliance_hunter.py", tmp_path)
         (tmp_path / ".env").write_text("\n".join(f"{k}={v}" for k, v in env_vars.items()) + "\n")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("EPO_", "WEBHOOK", "STALE", "TAG_", "DAT_"))}
-        env["PYTHONPATH"] = str(SHIM)
+        if not REAL_LIBRARY:
+            env["PYTHONPATH"] = str(SHIM)
         env["NO_PROXY"] = "127.0.0.1,localhost"
         return subprocess.run(
             [PYTHON, str(tmp_path / "compliance_hunter.py"), *args],

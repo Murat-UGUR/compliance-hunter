@@ -71,6 +71,7 @@ class State:
         self.fail_apply_batch = kw.get("fail_apply_batch")  # 1-based batch number to fail
         self.fail_clear_batch = kw.get("fail_clear_batch")
         self.fail_tag_query = kw.get("fail_tag_query", False)
+        self.http_500 = set(kw.get("http_500", ()))  # commands answered with HTTP 500 (real ePO does this)
         self.webhook_status = kw.get("webhook_status", 200)
         self.calls, self.webhooks, self.apply_calls, self.clear_calls = [], [], [], []
 
@@ -108,6 +109,10 @@ def remote(cmd):
         return err(0, "missing/invalid security token")
     if cmd == "core.getSecurityToken":
         return ok("TOKEN123")
+    if cmd in S.http_500 or (
+        cmd == "core.executeQuery" and "hasTag" in args.get("where", "") and "hasTag" in S.http_500
+    ):
+        return err(0, f"Simulated server error in {cmd}", http=500)
     if cmd == "core.help":
         return ok("core.executeQuery target select where order group joinTables")
     if cmd == "core.executeQuery":

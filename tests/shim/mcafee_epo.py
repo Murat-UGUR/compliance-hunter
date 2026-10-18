@@ -1,39 +1,57 @@
-"""Test shim reproducing the public interface of the `mcafee-epo` package
-(Client(url, username, password, session=None), client(cmd, *args, **kwargs), APIError).
-Lets the test suite run without the real package. Mirrors the library's behaviour:
-GET {url}/remote/{cmd}?:output=json, basic auth, positional args -> paramN,
-response 'OK:\n<json>' -> parsed json, anything else -> APIError."""
+"""Fallback stand-in for the `mcafee-epo` package (1.1.0), used only when the real package is not
+installed. CI installs the real package (requirements-dev.txt), so this file is not what CI tests.
+
+It mirrors the real library's behaviour, including the parts that matter for error handling:
+  - GET {url}/remote/{cmd} built with urljoin, basic auth, ":output=json" and the security token
+  - positional args -> param1, param2, ...
+  - r.raise_for_status() FIRST: HTTP 4xx/5xx raise requests.HTTPError, not APIError
+  - a 2xx body that does not start with "OK:" raises APIError
+An earlier version turned every failure into APIError, which hid a crash on HTTP 500 responses.
+"""
 
 import json
+from urllib.parse import urljoin
 
-import requests
+from requests import Session
 
 
 class APIError(Exception):
-    pass
+    """An error with the data received within a valid HTTP response."""
 
 
 class Client:
     def __init__(self, url, username, password, session=None):
-        self._url = url.rstrip("/")
-        self._auth = (username, password)
-        self._session = session or requests.Session()
+        self.url = url
+        self.username = username
+        self.password = password
+        self._session = session if session is not None else Session()
         self._token = None
 
-    def _request(self, name, params):
-        if self._token is None and name != "core.getSecurityToken":
-            self._token = self._request("core.getSecurityToken", {})
-        params = dict(params)
-        params[":output"] = "json"
-        if self._token:
-            params["orion.user.security.token"] = self._token
-        r = self._session.get(f"{self._url}/remote/{name}", auth=self._auth, params=params, timeout=10)
-        status, _, result = r.text.partition(":")
-        if status.strip() != "OK":
-            raise APIError(r.text.strip())
-        return json.loads(result.strip())
+    def _get_token(self, _skip=False):
+        if self._token is None and not _skip:
+            self._token = self._request("core.getSecurityToken")
+        return self._token
+
+    def _request(self, name, **kwargs):
+        kwargs.setdefault("auth", (self.username, self.password))
+        params = kwargs.setdefault("params", {})
+        is_json = params.setdefault(":output", "json") == "json"
+        params.setdefault("orion.user.security.token", self._get_token(_skip=name == "core.getSecurityToken"))
+        url = urljoin(self.url, f"remote/{name}")
+        if any(kwargs.get(key) for key in ("data", "json", "files")):
+            r = self._session.post(url, **kwargs)
+        else:
+            r = self._session.get(url, **kwargs)
+        r.raise_for_status()
+        text = r.text
+        if not text.startswith("OK:"):
+            raise APIError(text)
+        return json.loads(text[3:]) if is_json else text[3:]
 
     def __call__(self, name, *args, **kwargs):
-        params = {f"param{i + 1}": a for i, a in enumerate(args)}
+        params = kwargs.pop("params", {})
+        files = kwargs.pop("files", {})
+        for i, item in enumerate(args, start=1):
+            params[f"param{i}"] = item
         params.update(kwargs)
-        return self._request(name, params)
+        return self._request(name, params=params, files=files)

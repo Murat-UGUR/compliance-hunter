@@ -123,7 +123,7 @@ On Windows, use Task Scheduler with `python compliance_hunter.py >> hunter.log 2
 
 ## Testing without an ePO server
 
-The test suite spins up a **mock ePO Web API**. It handles basic auth, security tokens, `OK:`/`Error` responses, `olderThan` filtering, column validation and the tag catalog. The suite runs against a simulated 202-host fleet, so CI needs no real ePO.
+The test suite spins up a **mock ePO Web API** and runs the script against it with the **real `mcafee-epo` client library** (pinned to 1.1.0 in `requirements-dev.txt`). A stand-in in `tests/shim/` is used only when the package is not installed, and it mirrors the library exactly, including that HTTP 4xx/5xx responses raise `requests.HTTPError` rather than `APIError`. It handles basic auth, security tokens, `OK:`/`Error` responses, `olderThan` filtering, column validation and the tag catalog. The suite runs against a simulated 202-host fleet, so CI needs no real ePO.
 
 ```bash
 pip install -r requirements-dev.txt
@@ -131,6 +131,8 @@ pytest -v
 ```
 
 Covered: happy path, 50-host batching, dry-run, missing tag, partial batch failure, wrong password, unreachable server, missing config, wrong column, webhook failure, `.env` overrides, and the tag lifecycle: new / still / recovered classification, clearing recovered hosts in batches, all-clear message, `CLEAR_RECOVERED=false`, `FLAG_MISSING_DAT`, a failed clear batch, and a failed tagged-hosts query (which must never clear anything).
+
+Error handling is tested the way a real ePO fails: HTTP 500 answers to the query, the tag lookup, the tagged-hosts query and the tag/untag batches must never crash the script (exit codes 1 or 4, alert still sent where possible), and HTTP 401 is reported as an authentication problem.
 
 CI runs the suite on Linux (Python 3.10–3.13) and on Windows.
 

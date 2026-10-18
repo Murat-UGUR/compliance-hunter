@@ -123,3 +123,34 @@ def test_redirected_output_is_utf8(state, base_env, run, monkeypatch):
     p = run(base_env, "--dry-run")
     assert "ePO bağlantısı başarılı" in p.stderr
     assert "?" not in p.stderr.split("ePO ba", 1)[1].split(":", 1)[0]
+
+
+def test_http_500_on_query_is_exit_4_not_a_crash(base_env, run):
+    mock_epo.S.reset(http_500={"core.executeQuery"})
+    p = run(base_env)
+    assert p.returncode == 4
+    assert "HTTP 500" in p.stderr and "Traceback" not in p.stderr
+
+
+def test_http_500_on_find_tag_still_alerts(base_env, run):
+    mock_epo.S.reset(http_500={"system.findTag"})
+    p = run(base_env)
+    assert p.returncode == 1 and "Traceback" not in p.stderr
+    wh = mock_epo.S.webhooks[0]
+    assert any("findTag" in e for e in wh["errors"]) and not mock_epo.S.clear_calls
+
+
+def test_http_500_on_tagged_hosts_query_never_clears(base_env, run):
+    fleet, stale, compliant = _split_fleet()
+    mock_epo.S.reset(pre_tagged=compliant[:3], http_500={"hasTag"})
+    p = run(base_env)
+    assert p.returncode == 1 and "Traceback" not in p.stderr
+    assert not mock_epo.S.clear_calls
+
+
+def test_http_500_on_clear_batch_is_partial_failure(base_env, run):
+    fleet, stale, compliant = _split_fleet()
+    mock_epo.S.reset(pre_tagged=compliant[:3], http_500={"system.clearTag"})
+    p = run(base_env)
+    assert p.returncode == 1 and "Traceback" not in p.stderr
+    assert any("clearTag" in e and "HTTP 500" in e for e in mock_epo.S.webhooks[0]["errors"])

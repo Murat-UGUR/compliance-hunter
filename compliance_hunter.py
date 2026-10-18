@@ -8,7 +8,7 @@ Compliance Hunter - Trellix ePO günlük Sağlık ve Uyumluluk Kontrolü
 4) system.clearTag ile artık uyumlu olan (düzelen) cihazlardan etiketi kaldırır
 5) Sonucu (yeni / devam eden / düzelen) JSON olarak Webhook'a gönderir
 
-Gereksinimler:  pip install mcafee-epo requests python-dotenv
+Gereksinimler:  pip install -r requirements.txt   (mcafee-epo==1.1.0, requests, python-dotenv)
 Çalıştırma:     python compliance_hunter.py            (normal)
                 python compliance_hunter.py --dry-run  (etiket atmaz, webhook göndermez, sadece raporlar)
 """
@@ -62,7 +62,24 @@ COL_TAGS = "EPOLeafNode.AppliedTags"  # hasTag operatörü etiket ID'si ile çal
 DAT_TABLE = os.getenv("DAT_TABLE", "EPOProdPropsView_VIRUSCAN")
 COL_DAT_DATE = f"{DAT_TABLE}.{os.getenv('DAT_DATE_COLUMN', 'datdate')}"
 
+__version__ = "0.2.0"
+
 log = logging.getLogger("compliance_hunter")
+
+# mcafee-epo iki tür hata üretir: gövdesi "OK:" ile başlamayan yanıtlar için APIError, HTTP 4xx/5xx
+# yanıtlar için ise (önce raise_for_status çağırdığından) requests.HTTPError. Bağlantı kopması gibi ağ
+# hataları da requests.RequestException'dır. Bağlantı kurulduktan sonraki her ePO çağrısında üçü de
+# "ePO isteği başarısız" demektir; yakalanmazsa betik traceback ile çöker ve webhook hiç gitmez.
+EPO_ERRORS = (mcafee_epo.APIError, requests.exceptions.RequestException)
+
+
+def _epo_error(e: Exception) -> str:
+    """Hata mesajını kısa ve okunur yap (HTTP hatalarında durum kodu + gövdenin başı)."""
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        body = (resp.text or "").strip().replace("\n", " ")[:200]
+        return f"HTTP {resp.status_code}: {body}" if body else f"HTTP {resp.status_code}"
+    return str(e).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +185,9 @@ def _tag_batches(client, command: str, hostnames: list[str], tag_name: str) -> t
             result = client(command, names=",".join(batch), tagName=tag_name)
             ok += int(result) if str(result).isdigit() else len(batch)
             log.info("%s (batch %d): %s cihaz", verb, i // TAG_BATCH_SIZE + 1, result)
-        except mcafee_epo.APIError as e:
-            log.error("%s batch hatası: %s", verb, e)
-            errors.append(f"{verb} batch {i // TAG_BATCH_SIZE + 1}: {e}")
+        except EPO_ERRORS as e:
+            log.error("%s batch hatası: %s", verb, _epo_error(e))
+            errors.append(f"{verb} batch {i // TAG_BATCH_SIZE + 1}: {_epo_error(e)}")
     return ok, errors
 
 
@@ -267,6 +284,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Trellix ePO Compliance Hunter")
     parser.add_argument("--dry-run", action="store_true", help="Etiket atma/kaldırma ve webhook gönderme")
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--version", action="version", version=f"compliance-hunter {__version__}")
     args = parser.parse_args()
 
     _safe_console()
@@ -286,17 +304,27 @@ def main() -> int:
     except requests.exceptions.SSLError as e:
         log.critical("SSL hatası (EPO_VERIFY_SSL ayarını/CA dosyasını kontrol edin): %s", e)
         return 3
+    except requests.exceptions.HTTPError as e:
+        status = getattr(e.response, "status_code", None)
+        if status in (401, 403):
+            log.critical(
+                "ePO kimlik doğrulama/yetki hatası (HTTP %s): kullanıcı adı, şifre ve API yetkisini kontrol edin.",
+                status,
+            )
+        else:
+            log.critical("ePO bağlantı testi başarısız: %s", _epo_error(e))
+        return 3
     except requests.exceptions.RequestException as e:
         log.critical("ePO sunucusuna ulaşılamadı: %s", e)
         return 3
     except mcafee_epo.APIError as e:
-        log.critical("ePO API hatası (kimlik bilgisi/yetki?): %s", e)
+        log.critical("ePO API hatası (kimlik bilgisi/yetki?): %s", _epo_error(e))
         return 3
 
     try:
         devices = find_noncompliant(client)
-    except mcafee_epo.APIError as e:
-        log.critical("Sorgu hatası - tablo/kolon adlarını core.listTables ile doğrulayın: %s", e)
+    except EPO_ERRORS as e:
+        log.critical("Sorgu hatası - tablo/kolon adlarını core.listTables ile doğrulayın: %s", _epo_error(e))
         return 4
 
     errors: list[str] = []
@@ -305,17 +333,17 @@ def main() -> int:
     tag_id, tagged_before = None, None
     try:
         tag_id = find_tag_id(client, TAG_NAME)
-    except mcafee_epo.APIError as e:
-        log.error("Etiket aranamadı: %s", e)
-        errors.append(f"findTag: {e}")
+    except EPO_ERRORS as e:
+        log.error("Etiket aranamadı: %s", _epo_error(e))
+        errors.append(f"findTag: {_epo_error(e)}")
     if tag_id is not None:
         try:
             tagged_before = find_tagged(client, tag_id)
             log.info("Şu anda '%s' etiketli cihaz: %d", TAG_NAME, len(tagged_before))
-        except mcafee_epo.APIError as e:
+        except EPO_ERRORS as e:
             # Bilinmeyen durumda hiçbir etiketi kaldırma: yanlışlıkla temizlik yapmaktansa atla
-            log.error("Etiketli cihazlar sorgulanamadı, etiket kaldırma atlanıyor: %s", e)
-            errors.append(f"hasTag query: {e}")
+            log.error("Etiketli cihazlar sorgulanamadı, etiket kaldırma atlanıyor: %s", _epo_error(e))
+            errors.append(f"hasTag query: {_epo_error(e)}")
 
     current = {d["hostname"] for d in devices if d["hostname"]}
     if tagged_before is not None:
@@ -359,9 +387,9 @@ def main() -> int:
         if recovered:
             cleared, clear_errors = clear_tag(client, recovered, TAG_NAME)
             errors += clear_errors
-    except (mcafee_epo.APIError, RuntimeError) as e:
-        log.error("Etiketleme başarısız: %s", e)
-        errors.append(str(e))
+    except (*EPO_ERRORS, RuntimeError) as e:
+        log.error("Etiketleme başarısız: %s", _epo_error(e))
+        errors.append(_epo_error(e))
 
     try:
         send_webhook(cfg["WEBHOOK_URL"], devices, tagged, errors, recovered, cleared)
