@@ -99,6 +99,8 @@ Before the first real run, create the tag (`Outdated_DAT` by default) in **ePO â
 15 8 * * * cd /opt/compliance-hunter && /usr/bin/python3 compliance_hunter.py >> hunter.log 2>&1
 ```
 
+On Windows, use Task Scheduler with `python compliance_hunter.py >> hunter.log 2>&1`. When the output is redirected to a file, it is always written as **UTF-8**, so Turkish characters stay readable whatever the server's code page is.
+
 ## Webhook payload
 
 ```json

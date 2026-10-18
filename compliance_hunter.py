@@ -247,14 +247,20 @@ def send_webhook(
 # Ana akış
 # ---------------------------------------------------------------------------
 def _safe_console() -> None:
-    """Windows konsolu/Task Scheduler kod sayfası bir karakteri gösteremezse çökme olmasın."""
+    """Çıktı bir dosyaya/pipe'a yönlendirildiyse (cron, Task Scheduler '>> hunter.log') kod sayfasından
+    bağımsız UTF-8 yaz; böylece Türkçe karakterler log dosyasında '?' olmaz. Konsolda ise kod sayfası
+    bir karakteri gösteremezse çökme olmasın."""
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure:
-            try:
+        if not reconfigure:
+            continue
+        try:
+            if stream.isatty():
                 reconfigure(errors="replace")
-            except (ValueError, OSError):
-                pass
+            else:
+                reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
 
 
 def main() -> int:

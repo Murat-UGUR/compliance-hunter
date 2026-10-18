@@ -114,3 +114,12 @@ def test_flag_missing_dat(state, base_env, run):
     q = next(a for c, a in state.calls if c == "core.executeQuery")
     assert "(isBlank EPOProdPropsView_VIRUSCAN.datdate)" in q["where"]
     assert "SRV-NOAV-01" in state.tags[TAG]  # recent check-in but no DAT date
+
+
+def test_redirected_output_is_utf8(state, base_env, run, monkeypatch):
+    """Logs redirected to a file (cron, Task Scheduler) keep Turkish characters on any code page.
+    PYTHONIOENCODING=cp1252 reproduces a non-Turkish Windows server on every OS."""
+    monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
+    p = run(base_env, "--dry-run")
+    assert "ePO bağlantısı başarılı" in p.stderr
+    assert "?" not in p.stderr.split("ePO ba", 1)[1].split(":", 1)[0]

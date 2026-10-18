@@ -62,6 +62,7 @@ def run(tmp_path):
             env=env,
             capture_output=True,
             text=True,
+            encoding="utf-8",  # the script writes UTF-8 when redirected, on every OS / code page
             timeout=60,
         )
 
